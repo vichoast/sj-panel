@@ -1,0 +1,75 @@
+# Arma la app SJ Panel desde vichoast/menu-restoran y la publica en GitHub Pages.
+# No hay que editar nada aquí: los cambios del panel se hacen en menu-restoran
+# y esta app se actualiza sola (revisa cada 10 minutos, o al tocar "Run workflow").
+name: Armar y publicar SJ Panel
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # revisa si hubo cambios en menu-restoran
+    - cron: "17 12 1 * *"    # una vez al mes: mantiene activo el repo
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  armar:
+    if: github.event.schedule != '17 12 1 * *'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.publicar.outputs.page_url }}
+    steps:
+      - name: Traer menu-restoran
+        uses: actions/checkout@v4
+        with:
+          repository: vichoast/menu-restoran
+          path: origen
+
+      - name: Versión del panel
+        id: version
+        run: echo "sha=$(git -C origen rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: ¿Ya está publicada esta versión?
+        id: ya
+        uses: actions/cache@v4
+        with:
+          path: .publicado
+          key: sj-panel-${{ steps.version.outputs.sha }}-${{ hashFiles('origen/herramientas/armar-panel.sh') }}
+
+      - name: Armar la app
+        if: steps.ya.outputs.cache-hit != 'true' || github.event_name != 'schedule'
+        run: |
+          bash origen/herramientas/armar-panel.sh origen _site
+          mkdir -p .publicado && echo "${{ steps.version.outputs.sha }}" > .publicado/version
+
+      - uses: actions/configure-pages@v5
+        if: steps.ya.outputs.cache-hit != 'true' || github.event_name != 'schedule'
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.ya.outputs.cache-hit != 'true' || github.event_name != 'schedule'
+        with:
+          path: _site
+
+      - id: publicar
+        if: steps.ya.outputs.cache-hit != 'true' || github.event_name != 'schedule'
+        uses: actions/deploy-pages@v4
+
+  mantener-activo:
+    if: github.event.schedule == '17 12 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          date -u +%F > .vivo
+          git config user.name "sj-panel-bot"
+          git config user.email "sj-panel-bot@users.noreply.github.com"
+          git add .vivo && git commit -m "Mantener activo el armado automático" && git push
